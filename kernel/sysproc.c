@@ -42,13 +42,26 @@ uint64
 sys_sbrk(void)
 {
   int addr;
+  int newaddr;
   int n;
 
-  if(argint(0, &n) < 0)
+  if(argint(0, &n) < 0){
+    printf("vf tm ii ui le");
     return -1;
+  }
   addr = myproc()->sz;
-  if(growproc(n) < 0)
-    return -1;
+  // if(growproc(n) < 0)
+  //   return -1;
+
+  newaddr = PGROUNDUP(addr + n);
+  // kill the shit in kernel
+  if(newaddr < PGSIZE || newaddr >= MAXVA)
+    exit(-1);
+  // instantly free mem
+  if(newaddr < addr){
+    uvmdealloc(myproc()->pagetable, addr, newaddr);
+  }
+  myproc()->sz = newaddr;
   return addr;
 }
 

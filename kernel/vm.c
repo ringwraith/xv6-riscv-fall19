@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -187,19 +189,22 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 size, int do_free)
   a = PGROUNDDOWN(va);
   last = PGROUNDDOWN(va + size - 1);
   for(;;){
-    if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
+    if((pte = walk(pagetable, a, 0)) == 0){
+      // panic("uvmunmap: walk");
+      goto end;
+    }
     if((*pte & PTE_V) == 0){
-      printf("va=%p pte=%p\n", a, *pte);
-      panic("uvmunmap: not mapped");
+      // printf("va=%p pte=%p\n", a, *pte);
+      // panic("uvmunmap: not mapped");
     }
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
-    if(do_free){
+    if(do_free && ((*pte & PTE_V) != 0)){
       pa = PTE2PA(*pte);
       kfree((void*)pa);
     }
     *pte = 0;
+    end:
     if(a == last)
       break;
     a += PGSIZE;
@@ -326,9 +331,11 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
-      panic("uvmcopy: pte should exist");
+      // panic("uvmcopy: pte should exist");
+      continue;
     if((*pte & PTE_V) == 0)
-      panic("uvmcopy: page not present");
+      // panic("uvmcopy: page not present");
+      continue;
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -359,6 +366,39 @@ uvmclear(pagetable_t pagetable, uint64 va)
   *pte &= ~PTE_U;
 }
 
+
+int 
+fill_user_addr(uint64 addr, int len){
+  uint64 va0, va1;
+
+  if(len < 0) return -1;
+  struct proc *p = myproc();
+
+  va0 = PGROUNDDOWN(addr);
+  va1 = PGROUNDUP(addr + len);
+
+  while(va0 < va1) {
+    if(walkaddr(p->pagetable, va0) == 0) {
+      if (va0 >= p->sz || va0 < PGROUNDDOWN(p->tf->sp)){
+        va0 += PGSIZE;
+        continue;
+      }
+      char *mem = kalloc();
+      if(mem == 0){
+        return -1;
+      }
+      memset(mem, 0, PGSIZE);
+      if(mappages(p->pagetable, va0, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+        kfree(mem);
+        return -1;
+      }
+
+    }
+    va0 += PGSIZE;
+  }
+  return 0;
+}
+
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
@@ -366,6 +406,9 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
+
+  if(fill_user_addr(dstva, len) != 0)
+    return -1;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
@@ -391,6 +434,9 @@ int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
   uint64 n, va0, pa0;
+
+  if(fill_user_addr(srcva, len) != 0)
+    return -1;
 
   while(len > 0){
     va0 = PGROUNDDOWN(srcva);
@@ -418,6 +464,9 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
   uint64 n, va0, pa0;
   int got_null = 0;
+
+  // if(fill_user_addr(srcva, max) != 0)
+  //   return -1;
 
   while(got_null == 0 && max > 0){
     va0 = PGROUNDDOWN(srcva);
@@ -450,4 +499,34 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+void 
+_vmprint(pagetable_t pagetable, int idx) {
+  char *fmt;
+  if(idx == 1){
+    fmt = " ..%d: pte %p pa %p\n";
+  }else if(idx == 2) {
+    fmt = " .. ..%d: pte %p pa %p\n";
+  }else if(idx == 3){
+    fmt = " .. .. ..%d: pte %p pa %p\n";
+  }else{
+    return;
+  }
+
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if((pte & PTE_V) != 0){
+      uint64 child = PTE2PA(pte);
+      printf(fmt, i, pte, child);
+      _vmprint((pagetable_t)child, idx + 1);
+    }
+  }
+
+}
+
+void 
+vmprint(pagetable_t pagetable) {
+  printf("page table %p\n", pagetable);
+  _vmprint(pagetable, 1);
 }
