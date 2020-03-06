@@ -23,6 +23,13 @@ struct {
   struct run *freelist;
 } kmem;
 
+struct {
+  struct spinlock lock;
+  char* mark_base;
+  char* alloc_base;
+} kref;
+
+
 void
 kinit()
 {
@@ -34,7 +41,11 @@ void
 freerange(void *pa_start, void *pa_end)
 {
   char *p;
-  p = (char*)PGROUNDUP((uint64)pa_start);
+  kref.mark_base = (char*)PGROUNDUP((uint64)pa_start);
+  kref.alloc_base = (char*)(kref.mark_base + 8 * PGSIZE);
+  memset(kref.mark_base, 1, 8 * PGSIZE);
+
+  p = kref.alloc_base;
   for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
     kfree(p);
 }
@@ -50,6 +61,14 @@ kfree(void *pa)
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
+  
+  acquire(&kref.lock);
+  char ref = --kref.mark_base[((char*)pa - kref.alloc_base) / PGSIZE];
+  if(ref > 0){
+    release(&kref.lock);
+    return;
+  } 
+  release(&kref.lock);
 
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
@@ -76,7 +95,11 @@ kalloc(void)
     kmem.freelist = r->next;
   release(&kmem.lock);
 
-  if(r)
+  if(r){
     memset((char*)r, 5, PGSIZE); // fill with junk
+    acquire(&kref.lock);
+    ++kref.mark_base[((char*)r - kref.alloc_base) / PGSIZE];
+    release(&kref.lock);
+  }
   return (void*)r;
 }
