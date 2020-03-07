@@ -103,3 +103,11 @@ kalloc(void)
   }
   return (void*)r;
 }
+
+
+void
+ref_inc(void *pa){
+  acquire(&kref.lock);
+  ++kref.mark_base[((char*)pa - kref.alloc_base) / PGSIZE];
+  release(&kref.lock);
+}
