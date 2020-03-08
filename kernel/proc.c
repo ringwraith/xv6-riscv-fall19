@@ -122,7 +122,10 @@ found:
   memset(&p->context, 0, sizeof p->context);
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
-
+  p->interval = 0;
+  p->pass = 0;
+  p->sig_fn = 0;
+  p->sig_in = 0;
   return p;
 }
 

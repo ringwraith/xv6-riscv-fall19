@@ -76,6 +76,23 @@ usertrap(void)
   if(p->killed)
     exit(-1);
 
+  if(which_dev == 2) {
+    acquire(&p->lock);
+    if(p->interval > 0) {
+      if(p->sig_in == 0) {
+        p->back_tf = *(p->tf);
+      }
+      if((++p->pass) >= p->interval) {
+        if(p->sig_in == 0){
+          p->sig_in = 1;
+          p->tf->epc = p->sig_fn;
+          p->pass = 1;
+        }
+      }
+    }
+    release(&p->lock);
+  }
+
   // give up the CPU if this is a timer interrupt.
   if(which_dev == 2)
     yield();

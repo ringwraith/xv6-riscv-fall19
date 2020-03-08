@@ -95,3 +95,47 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64
+sys_sigalarm(void)
+{
+  int interval;
+  uint64 fn;
+  if(argint(0, &interval) < 0 || argaddr(1, &fn) < 0){
+    return -1;
+  }
+
+  struct proc* p = myproc();
+
+  acquire(&p->lock);
+  if(interval <= 0) {
+    p->interval = 0;
+    p->sig_fn = 0;
+    p->pass = 0;
+    memset(&(p->back_tf), 0, sizeof(struct trapframe));
+  }else{
+    p->interval = interval;
+    p->sig_fn = fn;
+    p->pass = 0;
+    memset(&(p->back_tf), 0, sizeof(struct trapframe));
+  }
+  release(&p->lock);
+  return 0;
+}
+
+uint64
+sys_sigreturn(void)
+{
+  struct proc* p = myproc();
+
+  acquire(&p->lock);
+  if(p->interval <= 0){
+    release(&p->lock);
+    return -1;
+  }else{
+    *p->tf = p->back_tf;
+    p->sig_in = 0;
+    release(&p->lock);
+  }
+  return 0;
+}
